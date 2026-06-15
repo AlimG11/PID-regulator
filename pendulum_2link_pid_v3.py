@@ -34,12 +34,12 @@ class SimConfig:
     gui: bool = False
     q0: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.0], dtype=float))
     q_des: np.ndarray = field(default_factory=lambda: np.array([0.8, -0.6], dtype=float))
-    torque_limits: np.ndarray = field(default_factory=lambda: np.array([100.0, 80.0], dtype=float))
+    torque_limits: np.ndarray = field(default_factory=lambda: np.array([120.0, 100.0], dtype=float))
     gains: PIDGains = field(
         default_factory=lambda: PIDGains(
-            kp=np.array([75.0, 55.0], dtype=float),
-            ki=np.array([1.5, 1.0], dtype=float),
-            kd=np.array([14.0, 10.0], dtype=float),
+            kp=np.array([80.0, 60.0], dtype=float),
+            ki=np.array([6.0, 4.0], dtype=float),
+            kd=np.array([13.0, 9.0], dtype=float),
         )
     )
 
@@ -182,12 +182,6 @@ def build_sim(config: SimConfig) -> tuple[int, int, tuple[int, int], Path]:
     return client, robot, (joint_1, joint_2), tmpdir
 
 
-def gravity_compensation(robot: int, q: np.ndarray) -> np.ndarray:
-    q_list = [float(q[0]), float(q[1])]
-    zeros = [0.0, 0.0]
-    return np.asarray(p.calculateInverseDynamics(robot, q_list, zeros, zeros), dtype=float)
-
-
 def run_simulation(config: SimConfig) -> dict[str, np.ndarray]:
     client, robot, joints, _tmpdir = build_sim(config)
     joint_1, joint_2 = joints
@@ -205,12 +199,13 @@ def run_simulation(config: SimConfig) -> dict[str, np.ndarray]:
     q_log = np.zeros((n_steps + 1, 2))
     dq_log = np.zeros((n_steps + 1, 2))
     tau_log = np.zeros((n_steps + 1, 2))
-    tau_ff_log = np.zeros((n_steps + 1, 2))
     ee_log = np.zeros((n_steps + 1, 3))
 
     e_int = np.zeros(2)
+    e_int_limit = np.array([3.5, 3.5], dtype=float)
+    e_prev = np.zeros(2)
 
-    def log_state(i: int, t: float, tau: Sequence[float] | None = None, tau_ff: Sequence[float] | None = None) -> None:
+    def log_state(i: int, t: float, tau: Sequence[float] | None = None) -> None:
         s1 = p.getJointState(robot, joint_1)
         s2 = p.getJointState(robot, joint_2)
         q = np.array([s1[0], s2[0]], dtype=float)
@@ -223,10 +218,8 @@ def run_simulation(config: SimConfig) -> dict[str, np.ndarray]:
         ee_log[i] = ee
         if tau is not None:
             tau_log[i] = np.asarray(tau, dtype=float)
-        if tau_ff is not None:
-            tau_ff_log[i] = np.asarray(tau_ff, dtype=float)
 
-    log_state(0, 0.0, tau=[0.0, 0.0], tau_ff=[0.0, 0.0])
+    log_state(0, 0.0, tau=[0.0, 0.0])
 
     for i in range(1, n_steps + 1):
         s1 = p.getJointState(robot, joint_1)
@@ -235,13 +228,18 @@ def run_simulation(config: SimConfig) -> dict[str, np.ndarray]:
         dq = np.array([s1[1], s2[1]], dtype=float)
 
         e = joint_error(q_des, q)
-        e_int += e * config.dt
-        e_int = np.clip(e_int, -1.5, 1.5)
+        de = (e - e_prev) / config.dt
+        e_prev = e
 
-        tau_ff = gravity_compensation(robot, q)
-        tau_fb = gains.kp * e + gains.ki * e_int - gains.kd * dq
-        tau = tau_ff + tau_fb
-        tau = clamp(tau, torque_limits)
+        e_int += e * config.dt
+        e_int = np.clip(e_int, -e_int_limit, e_int_limit)
+
+        tau_unsat = gains.kp * e + gains.ki * e_int - gains.kd * dq
+        tau = clamp(tau_unsat, torque_limits)
+        
+        sat = np.abs(tau_unsat - tau) > 1e-9
+        if np.any(sat):
+            e_int[sat] *= 0.98
 
         p.setJointMotorControl2(robot, joint_1, controlMode=p.TORQUE_CONTROL, force=float(tau[0]))
         p.setJointMotorControl2(robot, joint_2, controlMode=p.TORQUE_CONTROL, force=float(tau[1]))
@@ -251,7 +249,7 @@ def run_simulation(config: SimConfig) -> dict[str, np.ndarray]:
         if config.gui:
             time.sleep(config.dt)
 
-        log_state(i, i * config.dt, tau=tau, tau_ff=tau_ff)
+        log_state(i, i * config.dt, tau=tau)
 
     p.disconnect(client)
 
@@ -260,7 +258,6 @@ def run_simulation(config: SimConfig) -> dict[str, np.ndarray]:
         "q": q_log,
         "dq": dq_log,
         "tau": tau_log,
-        "tau_ff": tau_ff_log,
         "ee": ee_log,
     }
 
@@ -269,10 +266,9 @@ def plot_results(result: dict[str, np.ndarray], config: SimConfig, out_path: Pat
     t = result["t"]
     q = result["q"]
     tau = result["tau"]
-    tau_ff = result["tau_ff"]
     ee = result["ee"]
 
-    fig = plt.figure(figsize=(11, 11))
+    fig = plt.figure(figsize=(11, 10))
 
     ax1 = fig.add_subplot(4, 1, 1)
     ax1.plot(t, q[:, 0], label=r"$q_1$")
@@ -286,8 +282,6 @@ def plot_results(result: dict[str, np.ndarray], config: SimConfig, out_path: Pat
     ax2 = fig.add_subplot(4, 1, 2)
     ax2.plot(t, tau[:, 0], label=r"$\tau_1$")
     ax2.plot(t, tau[:, 1], label=r"$\tau_2$")
-    ax2.plot(t, tau_ff[:, 0], ":", label=r"$\tau_{1,ff}$")
-    ax2.plot(t, tau_ff[:, 1], ":", label=r"$\tau_{2,ff}$")
     ax2.set_ylabel("Torque [N·m]")
     ax2.grid(True)
     ax2.legend(loc="best")
@@ -309,7 +303,7 @@ def plot_results(result: dict[str, np.ndarray], config: SimConfig, out_path: Pat
     ax4.grid(True)
     ax4.legend(loc="best")
 
-    fig.suptitle("Two-link pendulum: PID torque control with gravity compensation")
+    fig.suptitle("Two-link pendulum: PID torque control")
     fig.tight_layout()
     fig.savefig(out_path, dpi=180)
     plt.show()
