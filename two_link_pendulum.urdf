@@ -1,0 +1,88 @@
+<robot name="two_link_pendulum">
+
+    <material name="white"><color rgba="1 1 1 1"/></material>
+    <material name="gray"><color rgba="0.4 0.4 0.4 1"/></material>
+    <material name="black"><color rgba="0 0 0 1"/></material>
+
+    <link name="world"/>
+
+    <link name="base">
+        <visual>
+            <geometry><sphere radius="0.06"/></geometry>
+            <material name="white"/>
+        </visual>
+        <inertial>
+            <mass value="0"/>
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+        </inertial>
+    </link>
+
+    <link name="link_1">
+        <visual>
+            <origin xyz="0 0 0.4" rpy="0 0 0"/>
+            <geometry><cylinder radius="0.025" length="0.8"/></geometry>
+            <material name="gray"/>
+        </visual>
+        <inertial>
+            <origin xyz="0 0 0.4" rpy="0 0 0"/>
+            <mass value="1.0"/>
+            <inertia ixx="0.05336666666666667" ixy="0" ixz="0" iyy="0.05336666666666667" iyz="0" izz="0.0012500000000000002"/>
+        </inertial>
+    </link>
+
+    <link name="link_2">
+        <visual>
+            <origin xyz="0 0 0.3" rpy="0 0 0"/>
+            <geometry><cylinder radius="0.022" length="0.6"/></geometry>
+            <material name="gray"/>
+        </visual>
+        <inertial>
+            <origin xyz="0 0 0.3" rpy="0 0 0"/>
+            <mass value="0.8"/>
+            <inertia ixx="0.02402666666666667" ixy="0" ixz="0" iyy="0.02402666666666667" iyz="0" izz="0.00064"/>
+        </inertial>
+    </link>
+
+    <link name="link_eef">
+        <visual>
+            <origin xyz="0 0 0.04" rpy="0 0 0"/>
+            <geometry><sphere radius="0.04"/></geometry>
+            <material name="black"/>
+        </visual>
+        <inertial>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <mass value="0.1"/>
+            <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
+        </inertial>
+    </link>
+
+    <joint name="world_to_base" type="fixed">
+        <parent link="world"/>
+        <child link="base"/>
+        <origin xyz="0 0 1.2" rpy="0 0 0"/>
+    </joint>
+
+    <joint name="joint_1" type="revolute">
+        <parent link="base"/>
+        <child link="link_1"/>
+        <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+        <axis xyz="0 1 0"/>
+        <limit lower="-3.1416" upper="3.1416" effort="120" velocity="8"/>
+        <dynamics damping="0.0" friction="0.0"/>
+    </joint>
+
+    <joint name="joint_2" type="revolute">
+        <parent link="link_1"/>
+        <child link="link_2"/>
+        <origin xyz="0 0 0.8" rpy="0 0 0"/>
+        <axis xyz="0 1 0"/>
+        <limit lower="-3.1416" upper="3.1416" effort="90" velocity="10"/>
+        <dynamics damping="0.0" friction="0.0"/>
+    </joint>
+
+    <joint name="joint_eef" type="fixed">
+        <parent link="link_2"/>
+        <child link="link_eef"/>
+        <origin xyz="0 0 0.6" rpy="0 0 0"/>
+    </joint>
+</robot>
